@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useTransition } from 'react';
 import type { WireGuardClient } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -8,67 +8,47 @@ import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { ArrowDown, ArrowUp, Check, Pencil, CheckCircle2, XCircle, X, ArrowUpDown, Power, PowerOff } from 'lucide-react';
+import { ArrowDown, ArrowUp, Check, Pencil, CheckCircle2, XCircle, X, ArrowUpDown, Power, PowerOff, Loader2 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
-
-const initialClients: WireGuardClient[] = [
-  {
-    id: '1',
-    name: 'John\'s MacBook Pro',
-    internalIp: '10.0.0.2',
-    externalIp: '123.45.67.89',
-    status: 'connected',
-    data: { transmitted: 1240, received: 5320 },
-    lastSeen: new Date(Date.now() - 1000 * 60 * 2).toISOString(),
-  },
-  {
-    id: '2',
-    name: 'Office Server',
-    internalIp: '10.0.0.3',
-    externalIp: '98.76.54.32',
-    status: 'connected',
-    data: { transmitted: 890, received: 12000 },
-    lastSeen: new Date(Date.now() - 1000 * 60 * 5).toISOString(),
-  },
-  {
-    id: '3',
-    name: 'Jane\'s iPhone',
-    internalIp: '10.0.0.4',
-    externalIp: '12.34.56.78',
-    status: 'disconnected',
-    data: { transmitted: 50, received: 150 },
-    lastSeen: new Date(Date.now() - 1000 * 60 * 60 * 24 * 2).toISOString(),
-  },
-];
+import { getClientsAction, renameClientAction, toggleClientConnectionAction } from '@/app/actions/wireguard';
 
 const getNestedValue = (obj: any, path: string) => {
     return path.split('.').reduce((acc, part) => acc && acc[part], obj);
 }
 
+const formatBytes = (bytes: number, decimals = 2) => {
+    if (!+bytes) return '0 Bytes'
+
+    const k = 1024
+    const dm = decimals < 0 ? 0 : decimals
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB']
+
+    const i = Math.floor(Math.log(bytes) / Math.log(k))
+
+    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`
+}
+
+
 export default function ClientsTable() {
-  const [clients, setClients] = useState<WireGuardClient[]>(initialClients);
+  const [clients, setClients] = useState<WireGuardClient[]>([]);
   const [editingClientId, setEditingClientId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
   const [now, setNow] = useState(new Date());
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'ascending' | 'descending' } | null>({ key: 'name', direction: 'ascending' });
+  const [isLoading, setIsLoading] = useState(true);
+  const [isPending, startTransition] = useTransition();
+
+  const fetchClients = async () => {
+    const freshClients = await getClientsAction();
+    setClients(freshClients);
+    if (isLoading) setIsLoading(false);
+  };
 
   useEffect(() => {
+    fetchClients();
+    
     const dataInterval = setInterval(() => {
-      setClients(prevClients =>
-        prevClients.map(client => {
-          if (client.status === 'connected') {
-            return {
-              ...client,
-              data: {
-                transmitted: client.data.transmitted + Math.floor(Math.random() * 10),
-                received: client.data.received + Math.floor(Math.random() * 50),
-              },
-              lastSeen: new Date().toISOString(),
-            };
-          }
-          return client;
-        })
-      );
+        startTransition(fetchClients);
     }, 5000);
 
     const timeInterval = setInterval(() => {
@@ -79,6 +59,7 @@ export default function ClientsTable() {
         clearInterval(dataInterval);
         clearInterval(timeInterval);
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const sortedClients = useMemo(() => {
@@ -131,23 +112,32 @@ export default function ClientsTable() {
 
   const handleSave = (clientId: string) => {
     if (!editingName.trim()) return;
-    setClients(clients.map(c => (c.id === clientId ? { ...c, name: editingName } : c)));
-    handleCancel();
+    startTransition(async () => {
+      await renameClientAction(clientId, editingName);
+      await fetchClients();
+      handleCancel();
+    });
   };
 
   const handleToggleConnection = (clientId: string) => {
-    setClients(clients.map(c => {
-        if (c.id === clientId) {
-            const isConnected = c.status === 'connected';
-            return {
-                ...c,
-                status: isConnected ? 'disconnected' : 'connected',
-                lastSeen: isConnected ? c.lastSeen : new Date().toISOString(),
-            };
-        }
-        return c;
-    }));
+    startTransition(async () => {
+        await toggleClientConnectionAction(clientId);
+        await fetchClients();
+    });
   };
+
+  if (isLoading) {
+      return (
+          <Card>
+              <CardHeader>
+                  <CardTitle>WireGuard Clients</CardTitle>
+              </CardHeader>
+              <CardContent className="flex justify-center items-center p-8">
+                  <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+              </CardContent>
+          </Card>
+      );
+  }
 
   return (
     <Card>
@@ -201,7 +191,7 @@ export default function ClientsTable() {
             <TableBody>
               <TooltipProvider>
                 {sortedClients.map(client => (
-                  <TableRow key={client.id}>
+                  <TableRow key={client.id} className={isPending ? 'opacity-50 transition-opacity' : ''}>
                     <TableCell className="font-medium">
                       {editingClientId === client.id ? (
                         <div className="flex items-center gap-2">
@@ -209,6 +199,7 @@ export default function ClientsTable() {
                             value={editingName}
                             onChange={e => setEditingName(e.target.value)}
                             className="h-8"
+                            disabled={isPending}
                           />
                         </div>
                       ) : (
@@ -237,7 +228,7 @@ export default function ClientsTable() {
                           <TooltipTrigger asChild>
                             <div className="flex items-center gap-1 text-muted-foreground">
                               <ArrowUp className="h-4 w-4" />
-                              <span>{(client.data.transmitted / 1024).toFixed(2)} GB</span>
+                              <span>{formatBytes(client.data.transmitted)}</span>
                             </div>
                           </TooltipTrigger>
                           <TooltipContent>Transmitted</TooltipContent>
@@ -246,7 +237,7 @@ export default function ClientsTable() {
                           <TooltipTrigger asChild>
                              <div className="flex items-center gap-1 text-muted-foreground">
                               <ArrowDown className="h-4 w-4" />
-                              <span>{(client.data.received / 1024).toFixed(2)} GB</span>
+                              <span>{formatBytes(client.data.received)}</span>
                             </div>
                           </TooltipTrigger>
                           <TooltipContent>Received</TooltipContent>
@@ -256,7 +247,7 @@ export default function ClientsTable() {
                     <TableCell>
                       <Tooltip>
                           <TooltipTrigger>
-                             {formatDistanceToNow(new Date(client.lastSeen), { addSuffix: true })}
+                             {formatDistanceToNow(new Date(client.lastSeen), { addSuffix: true, now })}
                           </TooltipTrigger>
                           <TooltipContent>
                               {new Date(client.lastSeen).toLocaleString()}
@@ -266,10 +257,10 @@ export default function ClientsTable() {
                     <TableCell className="text-right">
                       {editingClientId === client.id ? (
                         <div className="flex justify-end gap-2">
-                           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleSave(client.id)}>
-                              <Check className="h-4 w-4" />
+                           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleSave(client.id)} disabled={isPending}>
+                              {isPending ? <Loader2 className="h-4 w-4 animate-spin"/> : <Check className="h-4 w-4" />}
                           </Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={handleCancel}>
+                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={handleCancel} disabled={isPending}>
                               <X className="h-4 w-4" />
                           </Button>
                         </div>
@@ -277,10 +268,10 @@ export default function ClientsTable() {
                         <div className="flex justify-end gap-2">
                            <Tooltip>
                                 <TooltipTrigger asChild>
-                                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleToggleConnection(client.id)}>
-                                        {client.status === 'connected' 
+                                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleToggleConnection(client.id)} disabled={isPending}>
+                                        {isPending && !editingClientId ? <Loader2 className="h-4 w-4 animate-spin" /> : (client.status === 'connected' 
                                             ? <PowerOff className="h-4 w-4 text-destructive" /> 
-                                            : <Power className="h-4 w-4 text-accent" />}
+                                            : <Power className="h-4 w-4 text-accent" />)}
                                     </Button>
                                 </TooltipTrigger>
                                 <TooltipContent>
@@ -289,7 +280,7 @@ export default function ClientsTable() {
                             </Tooltip>
                             <Tooltip>
                                 <TooltipTrigger asChild>
-                                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEdit(client)}>
+                                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEdit(client)} disabled={isPending}>
                                       <Pencil className="h-4 w-4" />
                                     </Button>
                                 </TooltipTrigger>

@@ -8,12 +8,13 @@ export type SystemResource = {
 export type WireGuardClient = {
   id: string;
   name: string;
+  publicKey: string;
   internalIp: string;
   externalIp: string;
   status: 'connected' | 'disconnected';
   data: {
-    transmitted: number; // in MB
-    received: number; // in MB
+    transmitted: number; // in bytes
+    received: number; // in bytes
   };
   lastSeen: string;
 };
