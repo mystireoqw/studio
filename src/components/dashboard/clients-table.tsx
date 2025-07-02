@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import type { WireGuardClient } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { ArrowDown, ArrowUp, Check, Pencil, CheckCircle2, XCircle, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, Check, Pencil, CheckCircle2, XCircle, X, ArrowUpDown } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
 const initialClients: WireGuardClient[] = [
@@ -41,11 +41,16 @@ const initialClients: WireGuardClient[] = [
   },
 ];
 
+const getNestedValue = (obj: any, path: string) => {
+    return path.split('.').reduce((acc, part) => acc && acc[part], obj);
+}
+
 export default function ClientsTable() {
   const [clients, setClients] = useState<WireGuardClient[]>(initialClients);
   const [editingClientId, setEditingClientId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
   const [now, setNow] = useState(new Date());
+  const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'ascending' | 'descending' } | null>({ key: 'name', direction: 'ascending' });
 
   useEffect(() => {
     const dataInterval = setInterval(() => {
@@ -76,6 +81,44 @@ export default function ClientsTable() {
     };
   }, []);
 
+  const sortedClients = useMemo(() => {
+    let sortableItems = [...clients];
+    if (sortConfig) {
+      sortableItems.sort((a, b) => {
+        const aValue = getNestedValue(a, sortConfig.key);
+        const bValue = getNestedValue(b, sortConfig.key);
+        if (aValue === null || aValue === undefined) return 1;
+        if (bValue === null || bValue === undefined) return -1;
+        if (aValue < bValue) {
+          return sortConfig.direction === 'ascending' ? -1 : 1;
+        }
+        if (aValue > bValue) {
+          return sortConfig.direction === 'ascending' ? 1 : -1;
+        }
+        return 0;
+      });
+    }
+    return sortableItems;
+  }, [clients, sortConfig]);
+
+  const requestSort = (key: string) => {
+    let direction: 'ascending' | 'descending' = 'ascending';
+    if (sortConfig && sortConfig.key === key && sortConfig.direction === 'ascending') {
+      direction = 'descending';
+    }
+    setSortConfig({ key, direction });
+  };
+  
+  const getSortIcon = (columnKey: string) => {
+    if (!sortConfig || sortConfig.key !== columnKey) {
+        return <ArrowUpDown className="ml-2 h-4 w-4 opacity-50" />;
+    }
+    if (sortConfig.direction === 'ascending') {
+        return <ArrowUp className="ml-2 h-4 w-4" />;
+    }
+    return <ArrowDown className="ml-2 h-4 w-4" />;
+  };
+
   const handleEdit = (client: WireGuardClient) => {
     setEditingClientId(client.id);
     setEditingName(client.name);
@@ -101,18 +144,48 @@ export default function ClientsTable() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="min-w-[200px]">Name</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Internal IP</TableHead>
-                <TableHead>External IP</TableHead>
-                <TableHead>Data Transfer</TableHead>
-                <TableHead>Last Seen</TableHead>
+                <TableHead className="min-w-[200px]">
+                  <Button variant="ghost" onClick={() => requestSort('name')} className="-ml-4">
+                    Name
+                    {getSortIcon('name')}
+                  </Button>
+                </TableHead>
+                <TableHead>
+                  <Button variant="ghost" onClick={() => requestSort('status')} className="-ml-4">
+                    Status
+                    {getSortIcon('status')}
+                  </Button>
+                </TableHead>
+                <TableHead>
+                  <Button variant="ghost" onClick={() => requestSort('internalIp')} className="-ml-4">
+                    Internal IP
+                    {getSortIcon('internalIp')}
+                  </Button>
+                </TableHead>
+                <TableHead>
+                  <Button variant="ghost" onClick={() => requestSort('externalIp')} className="-ml-4">
+                    External IP
+                    {getSortIcon('externalIp')}
+                  </Button>
+                </TableHead>
+                <TableHead>
+                  <Button variant="ghost" onClick={() => requestSort('data.received')} className="-ml-4">
+                    Data Transfer
+                    {getSortIcon('data.received')}
+                  </Button>
+                </TableHead>
+                <TableHead>
+                  <Button variant="ghost" onClick={() => requestSort('lastSeen')} className="-ml-4">
+                    Last Seen
+                    {getSortIcon('lastSeen')}
+                  </Button>
+                </TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               <TooltipProvider>
-                {clients.map(client => (
+                {sortedClients.map(client => (
                   <TableRow key={client.id}>
                     <TableCell className="font-medium">
                       {editingClientId === client.id ? (
