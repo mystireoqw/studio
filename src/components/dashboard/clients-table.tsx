@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { ArrowDown, ArrowUp, Check, Pencil, CheckCircle2, XCircle, X, ArrowUpDown } from 'lucide-react';
+import { ArrowDown, ArrowUp, Check, Pencil, CheckCircle2, XCircle, X, ArrowUpDown, Power, PowerOff } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
 const initialClients: WireGuardClient[] = [
@@ -130,8 +130,23 @@ export default function ClientsTable() {
   };
 
   const handleSave = (clientId: string) => {
+    if (!editingName.trim()) return;
     setClients(clients.map(c => (c.id === clientId ? { ...c, name: editingName } : c)));
     handleCancel();
+  };
+
+  const handleToggleConnection = (clientId: string) => {
+    setClients(clients.map(c => {
+        if (c.id === clientId) {
+            const isConnected = c.status === 'connected';
+            return {
+                ...c,
+                status: isConnected ? 'disconnected' : 'connected',
+                lastSeen: isConnected ? c.lastSeen : new Date().toISOString(),
+            };
+        }
+        return c;
+    }));
   };
 
   return (
@@ -259,9 +274,30 @@ export default function ClientsTable() {
                           </Button>
                         </div>
                       ) : (
-                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEdit(client)}>
-                          <Pencil className="h-4 w-4" />
-                        </Button>
+                        <div className="flex justify-end gap-2">
+                           <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleToggleConnection(client.id)}>
+                                        {client.status === 'connected' 
+                                            ? <PowerOff className="h-4 w-4 text-destructive" /> 
+                                            : <Power className="h-4 w-4 text-accent" />}
+                                    </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                    {client.status === 'connected' ? 'Disconnect' : 'Connect'}
+                                </TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEdit(client)}>
+                                      <Pencil className="h-4 w-4" />
+                                    </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                    Edit Name
+                                </TooltipContent>
+                            </Tooltip>
+                        </div>
                       )}
                     </TableCell>
                   </TableRow>
