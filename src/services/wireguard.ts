@@ -1,3 +1,5 @@
+'use server';
+
 import type { WireGuardClient } from '@/lib/types';
 import { NodeSSH } from 'node-ssh';
 import fs from 'fs/promises';
