@@ -1,140 +1,178 @@
 import type { WireGuardClient } from '@/lib/types';
+import { NodeSSH } from 'node-ssh';
+import fs from 'fs/promises';
+import path from 'path';
 
 // --- IMPORTANT: REAL-WORLD IMPLEMENTATION GUIDE ---
-// This file is a blueprint for connecting to a real WireGuard server.
-// The current code uses mock data and does NOT make real connections.
-//
-// To make this work with your server, you need to:
-//
-// 1. CONFIGURE YOUR SERVER DETAILS:
-//    - Create a file named `.env.local` in the root of your project.
-//    - Copy the contents of `.env.local.example` into it.
-//    - Fill in your WireGuard server's IP, SSH user, and the path to your SSH key.
-//
-// 2. IMPLEMENT THE LOGIC:
-//    - You need a way to run commands on your server via SSH. The Node.js
-//      `child_process` module or a library like `node-ssh` can do this.
-//    - Replace the mock data logic in the functions below with your real
-//      SSH command logic. We've included comments with the `wg` commands
-//      you'll need to run.
+// This file now contains a REAL implementation for connecting to a WireGuard
+// server via SSH to fetch live data and manage clients.
 
-// This is mock data. In a real implementation, you would fetch this from a
-// database and merge it with live data from the `wg` command.
-// WireGuard itself doesn't store friendly names, so you need to store them elsewhere.
-let clients: WireGuardClient[] = [
+// --- PREREQUISITES ---
+// 1. CONFIGURE YOUR SERVER DETAILS:
+//    - Ensure you have a `.env.local` file in your project root.
+//    - Fill in WG_HOST, WG_USER, WG_PRIVATE_KEY_PATH, and WG_INTERFACE.
+//    - The user specified in WG_USER must have passwordless sudo access
+//      to run `wg` commands.
+
+// 2. DATA PERSISTENCE:
+//    - WireGuard itself doesn't store friendly names. This implementation
+//      uses an in-memory array (`clientsDB`) to store these names, linking
+//      them by public key.
+//    - In a production environment, you should replace this in-memory array
+//      with a persistent database (e.g., Firestore, PostgreSQL, or a simple
+//      JSON file on the server) to store client names and other metadata.
+
+// This acts as a simple, in-memory database for client names.
+// In a real app, this would be a database. You must replace these public keys
+// with the actual public keys of your clients.
+let clientsDB: Omit<WireGuardClient, 'status' | 'data' | 'lastSeen' | 'externalIp'>[] = [
   {
     id: '1',
     name: "John's MacBook Pro",
-    publicKey: 'aJ5iR3ZlY3JlZSBwbGFjZWhvbGRlcgo=',
+    publicKey: 'REPLACE_WITH_CLIENT_1_PUBLIC_KEY',
     internalIp: '10.0.0.2',
-    externalIp: '123.45.67.89',
-    status: 'connected',
-    data: { transmitted: 1240 * 1024 * 1024, received: 5320 * 1024 * 1024 },
-    lastSeen: new Date(Date.now() - 1000 * 60 * 2).toISOString(),
   },
   {
     id: '2',
     name: 'Office Server',
-    publicKey: 'bK6jS4ZlY3JlZSBwbGFjZWhvbGRlcgo=',
+    publicKey: 'REPLACE_WITH_CLIENT_2_PUBLIC_KEY',
     internalIp: '10.0.0.3',
-    externalIp: '98.76.54.32',
-    status: 'connected',
-    data: { transmitted: 890 * 1024 * 1024, received: 12000 * 1024 * 1024 },
-    lastSeen: new Date(Date.now() - 1000 * 60 * 5).toISOString(),
   },
   {
     id: '3',
     name: "Jane's iPhone",
-    publicKey: 'cL7kT5ZlY3JlZSBwbGFjZWhvbGRlcgo=',
+    publicKey: 'REPLACE_WITH_CLIENT_3_PUBLIC_KEY',
     internalIp: '10.0.0.4',
-    externalIp: '12.34.56.78',
-    status: 'disconnected',
-    data: { transmitted: 50 * 1024 * 1024, received: 150 * 1024 * 1024 },
-    lastSeen: new Date(Date.now() - 1000 * 60 * 60 * 24 * 2).toISOString(),
   },
 ];
 
-/**
- * Fetches the list of all WireGuard clients.
- */
-export async function getClients(): Promise<WireGuardClient[]> {
-  // --- REAL IMPLEMENTATION ---
-  // 1. Run this command on your server: `wg show all dump`
-  //    This gives you live data for all peers.
-  //
-  // 2. Parse the tab-separated output. Each line is a client. The columns are:
-  //    public_key, preshared_key, endpoint, allowed_ips, latest_handshake,
-  //    transfer_rx, transfer_tx, persistent_keepalive
-  //
-  // 3. Merge this live data with your stored client names (from the `clients`
-  //    array above or a real database). Match them by public_key.
-  //
-  // 4. Return the merged and updated list of clients.
+const ssh = new NodeSSH();
 
-  console.log("getClients: Using mock data. Implement real logic in src/services/wireguard.ts");
-  // Simulate network latency and data fluctuation
-  await new Promise(resolve => setTimeout(resolve, 200));
-  return clients.map(client => {
-    if (client.status === 'connected') {
-      return {
-        ...client,
-        data: {
-          transmitted: client.data.transmitted + Math.floor(Math.random() * 10000000),
-          received: client.data.received + Math.floor(Math.random() * 50000000),
-        },
-        lastSeen: new Date().toISOString(),
-      };
-    }
-    return client;
+async function getSshConnection() {
+  if (ssh.isConnected()) {
+    return ssh;
+  }
+  const privateKeyPath = path.resolve(process.env.WG_PRIVATE_KEY_PATH!);
+  const privateKey = await fs.readFile(privateKeyPath, 'utf8');
+
+  await ssh.connect({
+    host: process.env.WG_HOST!,
+    username: process.env.WG_USER!,
+    privateKey: privateKey,
   });
+  return ssh;
+}
+
+async function runSshCommand(command: string) {
+  try {
+    const sshConnection = await getSshConnection();
+    const result = await sshConnection.execCommand(command);
+    if (result.code !== 0) {
+      console.error(`SSH command failed: ${command}`, result.stderr);
+      throw new Error(`Command failed with code ${result.code}: ${result.stderr}`);
+    }
+    return result.stdout;
+  } catch (error) {
+    console.error(`Error executing SSH command: ${command}`, error);
+    if (ssh.isConnected()) {
+      ssh.dispose();
+    }
+    throw error;
+  }
 }
 
 /**
- * Toggles a client's connection.
- * This is a simplified simulation. A real implementation is more complex.
+ * Fetches the list of all WireGuard clients with live data from the server.
  */
-export async function toggleConnection(clientId: string): Promise<WireGuardClient | null> {
-  const client = clients.find(c => c.id === clientId);
-  if (!client) return null;
+export async function getClients(): Promise<WireGuardClient[]> {
+  try {
+    const command = `sudo wg show ${process.env.WG_INTERFACE} dump`;
+    const dumpOutput = await runSshCommand(command);
 
-  // --- REAL IMPLEMENTATION ---
-  // Toggling a connection requires modifying the server's configuration.
-  // Disabling is easier than enabling.
-  //
-  // TO DISABLE: Run `sudo wg set <interface> peer <PUBLIC_KEY> remove`
-  //   Example: `sudo wg set wg0 peer aJ5iR3ZlY3JlZSBwbGFjZWhvbGRlcgo= remove`
-  //
-  // TO ENABLE: You must add the peer's config block back to the wg0.conf
-  //   file and then reload the WireGuard service. This is complex and
-  //   requires careful scripting.
-  //
-  // Update the status based on the command's success.
+    const lines = dumpOutput.trim().split('\n');
+    const liveClientsData = new Map<string, Partial<WireGuardClient>>();
+    
+    for (let i = 1; i < lines.length; i++) {
+      const parts = lines[i].split('\t');
+      if (parts.length < 7) continue;
 
-  console.log("toggleConnection: Using mock data. Implement real logic in src/services/wireguard.ts");
-  await new Promise(resolve => setTimeout(resolve, 500));
-  client.status = client.status === 'connected' ? 'disconnected' : 'connected';
-  if (client.status === 'connected') {
-    client.lastSeen = new Date().toISOString();
+      const [publicKey, _presharedKey, endpoint, allowedIps, latestHandshake, transferRx, transferTx] = parts;
+
+      liveClientsData.set(publicKey, {
+        publicKey,
+        externalIp: endpoint.split(':')[0],
+        internalIp: allowedIps.split('/')[0],
+        lastSeen: new Date(parseInt(latestHandshake) * 1000).toISOString(),
+        data: {
+          received: parseInt(transferRx),
+          transmitted: parseInt(transferTx),
+        },
+        status: (Date.now() / 1000 - parseInt(latestHandshake)) < 180 ? 'connected' : 'disconnected',
+      });
+    }
+
+    const mergedClients = clientsDB.map(dbClient => {
+      const liveData = liveClientsData.get(dbClient.publicKey);
+      if (liveData) {
+        return { ...dbClient, ...liveData } as WireGuardClient;
+      } else {
+        return {
+          ...dbClient,
+          externalIp: 'N/A',
+          status: 'disconnected',
+          data: { transmitted: 0, received: 0 },
+          lastSeen: new Date(0).toISOString(),
+        } as WireGuardClient;
+      }
+    });
+
+    return mergedClients;
+
+  } catch (error) {
+    console.error("Failed to get clients from WireGuard server:", error);
+    // You might want to add error handling in the UI for this case.
+    return [];
   }
-  return { ...client };
+}
+
+/**
+ * Toggles a client's connection state.
+ */
+export async function toggleConnection(clientId: string): Promise<void> {
+  const clientInDB = clientsDB.find(c => c.id === clientId);
+  if (!clientInDB) {
+    throw new Error(`Client with ID ${clientId} not found in local database.`);
+  }
+
+  const currentClients = await getClients();
+  const currentClientState = currentClients.find(c => c.id === clientId);
+  if (!currentClientState) {
+    throw new Error(`Could not retrieve current state for client ID ${clientId}.`);
+  }
+  
+  if (currentClientState.status === 'connected') {
+    console.log(`Disabling client: ${clientInDB.name}`);
+    const command = `sudo wg set ${process.env.WG_INTERFACE} peer ${clientInDB.publicKey} remove`;
+    await runSshCommand(command);
+  } else {
+    // WARNING: This is a simplification. It assumes the client does not use a
+    // preshared key. A robust solution would need to manage the full configuration.
+    console.log(`Enabling client: ${clientInDB.name}`);
+    const command = `sudo wg set ${process.env.WG_INTERFACE} peer ${clientInDB.publicKey} allowed-ips ${clientInDB.internalIp}/32`;
+    await runSshCommand(command);
+  }
 }
 
 /**
  * Renames a client.
  */
-export async function renameClient(clientId: string, newName: string): Promise<WireGuardClient | null> {
-  // --- REAL IMPLEMENTATION ---
-  // WireGuard does not store friendly names. This function should update
-  // the name in your chosen database (e.g., Firestore, PostgreSQL, or
-  // even a simple JSON file on the server). The current implementation
-  // just updates the in-memory array.
-
-  console.log("renameClient: Using mock data. Implement real logic in src/services/wireguard.ts");
-  await new Promise(resolve => setTimeout(resolve, 200));
-  const client = clients.find(c => c.id === clientId);
+export async function renameClient(clientId: string, newName: string): Promise<void> {
+  const client = clientsDB.find(c => c.id === clientId);
   if (client && newName.trim()) {
     client.name = newName.trim();
-    return { ...client };
+    // In a real app, you would save this change to your persistent database.
+    console.log(`Renamed client ${clientId} to "${newName.trim()}" in the local database.`);
+  } else {
+    throw new Error(`Could not rename client with ID ${clientId}.`);
   }
-  return null;
 }
