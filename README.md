@@ -12,6 +12,7 @@ Follow these steps to run the project on your local machine after downloading it
 
 - [Node.js](https://nodejs.org/) (version 18 or higher is recommended)
 - [npm](https://www.npmjs.com/) (usually comes with Node.js)
+- Passwordless SSH access to your WireGuard server from the machine running this app.
 
 ### 1. Install Dependencies
 
@@ -35,9 +36,6 @@ This project requires credentials to connect to your WireGuard server via SSH.
 
     # The username for the SSH connection
     WG_USER=your_ssh_user
-
-    # The absolute path to your SSH private key on the machine running this app
-    WG_PRIVATE_KEY_PATH=/path/to/your/ssh/private/key
 
     # The name of your WireGuard interface on the server (e.g., wg0)
     WG_INTERFACE=wg0
